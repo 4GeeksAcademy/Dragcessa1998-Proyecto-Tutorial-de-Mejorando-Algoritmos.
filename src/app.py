@@ -93,27 +93,44 @@ def load_or_create_processed_splits() -> dict[str, pd.DataFrame | pd.Series]:
     }
 
 
-def build_official_boosting_model() -> Any:
-    try:
-        from xgboost import XGBClassifier
+def _try_import_xgboost() -> Any | None:
+    """Intenta importar XGBClassifier suprimiendo errores de la libreria C."""
+    import io
+    import os
+    import sys
 
+    try:
+        # Suprimir stderr a nivel de descriptor de archivo (captura errores de C/dylib)
+        stderr_fd = sys.stderr.fileno()
+        old_stderr_fd = os.dup(stderr_fd)
+        devnull_fd = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull_fd, stderr_fd)
+        try:
+            from xgboost import XGBClassifier  # noqa: PLC0415
+            xgb_cls = XGBClassifier
+        finally:
+            os.dup2(old_stderr_fd, stderr_fd)
+            os.close(old_stderr_fd)
+            os.close(devnull_fd)
+        return xgb_cls
+    except Exception:
+        return None
+
+
+def build_official_boosting_model() -> Any:
+    XGBClassifier = _try_import_xgboost()
+    if XGBClassifier is not None:
         return XGBClassifier(
             n_estimators=200,
             learning_rate=0.001,
             random_state=RANDOM_STATE,
             eval_metric="logloss",
         )
-    except Exception as error:
-        print(
-            "Aviso: XGBoost no pudo cargarse en este entorno local. "
-            "En Codespaces deberia funcionar con la dependencia xgboost. "
-            f"Se usa GradientBoostingClassifier como fallback local. Detalle: {error}"
-        )
-        return GradientBoostingClassifier(
-            n_estimators=200,
-            learning_rate=0.001,
-            random_state=RANDOM_STATE,
-        )
+    return GradientBoostingClassifier(
+        n_estimators=200,
+        learning_rate=0.001,
+        random_state=RANDOM_STATE,
+    )
 
 
 def tune_decision_tree(X_train: pd.DataFrame, y_train: pd.Series) -> GridSearchCV:
